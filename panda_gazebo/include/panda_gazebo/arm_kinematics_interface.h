@@ -10,7 +10,7 @@
 **************************************************************************/
 
 /***************************************************************************
-* Copyright (c) 2019, Saif Sidhik
+* Copyright (c) 2019-2020, Saif Sidhik
 * Copyright (c) 2018, Rethink Robotics Inc.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,19 +42,16 @@
 #include <geometry_msgs/Twist.h>
 #include <geometry_msgs/Pose.h>
 #include <geometry_msgs/Wrench.h>
+#include <geometry_msgs/WrenchStamped.h>
 
 #include <Eigen/Geometry>
-
-#include <kdl/chainidsolver_recursive_newton_euler.hpp>
-#include <kdl/chainfksolverpos_recursive.hpp>
-#include <kdl/chainfksolvervel_recursive.hpp>
-#include <kdl/chainjnttojacsolver.hpp>
-#include <kdl/chaindynparam.hpp>
-#include <sns_ik/sns_ik.hpp>
 
 #include <kdl/jntarray.hpp>
 #include <kdl/tree.hpp>
 #include <urdf/model.h>
+#include "kdl/chainfksolver.hpp"
+
+#include <panda_gazebo/kdl_methods.h>
 
 namespace panda_gazebo
 {
@@ -72,16 +69,10 @@ struct Kinematics
 {
   KDL::Chain chain;
   std::vector<std::string> joint_names;
-  std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_pos_solver;
-  std::unique_ptr<KDL::ChainFkSolverVel_recursive> fk_vel_solver;
-  std::unique_ptr<KDL::ChainIdSolver_RNE>         gravity_solver;
-  std::unique_ptr<KDL::ChainJntToJacSolver>         jac_solver;
-  std::unique_ptr<KDL::ChainDynParam>         chain_dyn_param;
-  std::unique_ptr<sns_ik::SNS_IK>                     ik_solver;
-  // std::unique_ptr<KDL::ChainFdSolver>           fk_eff_solver;// TODO(imcmahon)
+  
 };
 private:
-std::string side_, root_name_, tip_name_, camera_name_, gravity_tip_name_;
+std::string root_name_, tip_name_, gravity_tip_name_;
 urdf::Model robot_model_;
 franka_core_msgs::JointLimits joint_limits_;
 KDL::Tree tree_;
@@ -90,9 +81,11 @@ std::map<std::string, Kinematics> kinematic_chain_map_;
 
 realtime_tools::RealtimeBox< std::shared_ptr<const franka_core_msgs::JointCommand> > joint_command_buffer_;
 realtime_tools::RealtimeBox< std::shared_ptr<const sensor_msgs::JointState> > joint_state_buffer_;
+realtime_tools::RealtimeBox<std::shared_ptr<const geometry_msgs::Wrench>> ft_msg_buffer_;
 
 ros::Subscriber joint_command_sub_;
 ros::Subscriber joint_state_sub_;
+ros::Subscriber ft_sensor_sub_;
 
 ros::Publisher joint_limits_pub_;
 ros::Publisher endpoint_state_pub_;
@@ -101,6 +94,11 @@ long endpoint_state_seq_;
 long gravity_torques_seq_;
 
 ros::Timer update_timer_;
+
+KDLMethods* kdl_;
+
+
+  // std::unique_ptr<KDL::ChainFkSolverPos_recursive fk_pos_solver_;
 
 /* Method to be invoked at a regular interval for publishing states
  */
@@ -121,6 +119,10 @@ void jointCommandCallback(const franka_core_msgs::JointCommandConstPtr& msg);
 /* Callback to capture and store the current joint states of the robot
  */
 void jointStateCallback(const sensor_msgs::JointStateConstPtr& msg);
+
+/* Callback to capture and store the current force torque values from wrist sensor
+ */
+void ftSensorCallback(const geometry_msgs::WrenchStampedConstPtr &msg);
 
 /* Compute Jacobian and end effector velocity and add to Robot State message
  */
@@ -151,20 +153,12 @@ bool parseParams(const ros::NodeHandle& nh);
  */
 bool computePositionFK(const Kinematics& kin, const KDL::JntArray& jnt_pos, geometry_msgs::Pose& result);
 
-/* Method to calculate the position IK for the required geometry_msg::Pose
- * with the result stored in KDL::JntArray
- *  @returns true if successful
- */
-bool computePositionIK(const Kinematics& kin, const geometry_msgs::Pose& cart_pose,
-                       const KDL::JntArray& jnt_nullspace_bias,
-                       const KDL::JntArray& jnt_seed, KDL::JntArray& result);
-
 
 /* Method to calculate the velocity FK for the required joint velocities in rad/sec
  * with the result stored in geometry_msgs::Twist
  * @returns true if successful
  */
-bool computeVelocityFK(const Kinematics& kin, const KDL::JntArrayVel& jnt_vel, geometry_msgs::Twist& result);
+// bool computeVelocityFK(const Kinematics& kin, const KDL::JntArrayVel& jnt_vel, geometry_msgs::Twist& result);
 
 // bool computeEffortFK(const Kinematics& kin,
 //                                              const KDL::JntArray& jnt_pos,

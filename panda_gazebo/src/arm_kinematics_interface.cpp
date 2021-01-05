@@ -10,7 +10,7 @@
 **************************************************************************/
 
 /***************************************************************************
-* Copyright (c) 2019, Saif Sidhik
+* Copyright (c) 2019-2020, Saif Sidhik
 * Copyright (c) 2018, Rethink Robotics Inc.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,6 @@
 #include <memory>
 
 #include <franka_core_msgs/EndPointState.h>
-#include <geometry_msgs/PoseStamped.h>
 
 #include <kdl/frames.hpp>
 #include <kdl_parser/kdl_parser.hpp>
@@ -60,24 +59,21 @@ bool ArmKinematicsInterface::init(ros::NodeHandle& nh)
   {
     return false;
   }
-  // Init Solvers to default hand camera
-  // if (!createKinematicChain(camera_name_))
-  // {
-  //   return false;
-  // }
   gravity_torques_seq_ = 0;
   robot_state_publisher_ = nh.advertise<franka_core_msgs::RobotState>(
-                            "custom_franka_state_controller/robot_state", 1);
+                            "/panda_simulator/custom_franka_state_controller/robot_state", 1);
   endpoint_state_pub_ = nh.advertise<franka_core_msgs::EndPointState>(
-                            "custom_franka_state_controller/tip_state", 1);
+                            "/panda_simulator/custom_franka_state_controller/tip_state", 1);
   joint_state_sub_ = nh.subscribe("joint_states", 1,
                        &ArmKinematicsInterface::jointStateCallback, this);
-  joint_command_sub_ = nh.subscribe("motion_controller/arm/joint_commands", 1,
+  joint_command_sub_ = nh.subscribe("/panda_simulator/motion_controller/arm/joint_commands", 1,
                        &ArmKinematicsInterface::jointCommandCallback, this);
+  ft_sensor_sub_ = nh.subscribe("/gazebo/robot/wrist/ft", 1,
+                       &ArmKinematicsInterface::ftSensorCallback, this);
   // Update at 100Hz
   update_timer_ = nh.createTimer(100, &ArmKinematicsInterface::update, this);
   joint_limits_pub_ = nh.advertise<franka_core_msgs::JointLimits>(
-                            "joint_limits", 1, true);
+                            "/panda_simulator/joint_limits", 1, true);
   joint_limits_pub_.publish(joint_limits_);
   return true;
 }
@@ -89,7 +85,7 @@ franka_core_msgs::JointLimits ArmKinematicsInterface::retrieveJointLimits()
   for (const auto& kv : tree_.getSegments())
   {
     auto jnt = kv.second.segment.getJoint();
-    if (jnt.getTypeName() == "None" || jnt.getTypeName() == "Unknown")
+    if (jnt.getTypeName() == "None" || jnt.getTypeName() == "Unknown" || jnt.getTypeName() == "Fixed")
       continue;
     auto joint_name = kv.second.segment.getJoint().getName();
     auto joint_limits_ptr = robot_model_.getJoint(joint_name)->limits;
@@ -137,18 +133,11 @@ bool ArmKinematicsInterface::createKinematicChain(std::string tip_name)
   for (size_t seg_idx = 0; seg_idx < kin.chain.getNrOfSegments(); seg_idx++)
   {
     const auto& jnt = kin.chain.getSegment(seg_idx).getJoint();
-    if (jnt.getTypeName() == "None" || jnt.getTypeName() == "Unknown")
+    if (jnt.getTypeName() == "None" || jnt.getTypeName() == "Unknown" || jnt.getTypeName() == "Fixed")
       continue;
     kin.joint_names.push_back(kin.chain.getSegment(seg_idx).getJoint().getName());
   }
-  // Construct Solvers
-  KDL::Vector grav_(0.0,0.0,-9.81);
-
-  kin.chain_dyn_param = std::make_unique<KDL::ChainDynParam>(kin.chain, grav_);
-  kin.gravity_solver = std::make_unique<KDL::ChainIdSolver_RNE>(kin.chain, grav_);
-  kin.fk_pos_solver = std::make_unique<KDL::ChainFkSolverPos_recursive>(kin.chain);
-  kin.fk_vel_solver = std::make_unique<KDL::ChainFkSolverVel_recursive>(kin.chain);
-  kin.jac_solver = std::make_unique<KDL::ChainJntToJacSolver>(kin.chain);
+  
   auto num_jnts = kin.joint_names.size();
   KDL::JntArray q_min(num_jnts);
   KDL::JntArray q_max(num_jnts);
@@ -173,9 +162,8 @@ bool ArmKinematicsInterface::createKinematicChain(std::string tip_name)
                      kin.joint_names[i].c_str());
     }
   }
-  kin.ik_solver = std::make_unique<sns_ik::SNS_IK>(kin.chain, q_min, q_max,
-                                                   v_max, a_max, kin.joint_names);
-  kin.ik_solver->setVelocitySolveType(sns_ik::SNS_FastOptimal);
+  kdl_ = new KDLMethods;
+  kdl_->initialise(kin.chain);
   kinematic_chain_map_.insert(std::make_pair(tip_name, std::move(kin)));
   return true;
 }
@@ -190,30 +178,24 @@ bool ArmKinematicsInterface::parseParams(const ros::NodeHandle& nh)
         "Could not load the xml from parameter server: %s", urdf_xml.c_str());
     return false;
   }
-  if (!nh.getParam("arm/root_name", root_name_))
+  if (!nh.getParam("/arm/root_name", root_name_))
   {
     ROS_FATAL_NAMED("kinematics",
         "No root name for Kinematic Chain found on parameter server");
     return false;
   }
-  if (!nh.getParam("arm/tip_name", tip_name_))
+  if (!nh.getParam("/arm/tip_name", tip_name_))
   {
     ROS_FATAL_NAMED("kinematics",
         "No tip name for Kinematic Chain found on parameter server");
     return false;
   }
-  if (!nh.getParam("arm/gravity_tip_name", gravity_tip_name_))
+  if (!nh.getParam("/arm/gravity_tip_name", gravity_tip_name_))
   {
     ROS_FATAL_NAMED("kinematics",
         "No tip name for Kinematic Chain found on parameter server");
     return false;
   }
-  // if (!nh.getParam("arm/camera_name", camera_name_))
-  // {
-  //   ROS_FATAL_NAMED("kinematics",
-  //       "No hand camera name found on parameter server");
-  //   return false;
-  // }
   robot_model_.initString(urdf_xml);
   if (!kdl_parser::treeFromUrdfModel(robot_model_, tree_))
   {
@@ -248,6 +230,12 @@ void ArmKinematicsInterface::jointCommandCallback(const franka_core_msgs::JointC
   joint_command_buffer_.set(joint_command);
 }
 
+void ArmKinematicsInterface::ftSensorCallback(const geometry_msgs::WrenchStampedConstPtr &msg)
+{
+  auto ft_vals = std::make_shared<geometry_msgs::Wrench>(msg->wrench);
+  ft_msg_buffer_.set(ft_vals);
+}
+
 void ArmKinematicsInterface::publishRobotState()
 {
   std::shared_ptr<const sensor_msgs::JointState> joint_state;
@@ -256,29 +244,10 @@ void ArmKinematicsInterface::publishRobotState()
   {
     franka_core_msgs::RobotState robot_state_msg;
     auto num_jnts = kinematic_chain_map_[tip_name_].chain.getNrOfJoints();
+    // ROS_WARN_NAMED("this","num_j %d", num_jnts);
     KDL::JntArray jnt_pos(num_jnts), jnt_vel(num_jnts), jnt_eff(num_jnts), jnt_accelerations(num_jnts);
     KDL::JntArray jnt_gravity_model(num_jnts), jnt_gravity_only(num_jnts), jnt_zero(num_jnts);
     jointStateToKDL(*joint_state, kinematic_chain_map_[tip_name_], jnt_pos, jnt_vel, jnt_eff);
-
-    std::shared_ptr<const franka_core_msgs::JointCommand> joint_command;
-    joint_command_buffer_.get(joint_command);
-    // if (joint_command)
-    // { 
-    //   std::array<double, 7> acc;
-    //   addGravityToMsg(kinematic_chain_map_[tip_name_].joint_names, *joint_command, robot_state_msg, acc);
-    //   for (auto i = 0; i < joint_command->acceleration.size(); i++)
-    //     jnt_accelerations(i) = joint_command->acceleration[i];
-    // }
-
-    // computeGravity(kinematic_chain_map_[tip_name_], jnt_pos, jnt_vel, jnt_accelerations, jnt_gravity_model);
-    // computeGravity(kinematic_chain_map_[tip_name_], jnt_pos, jnt_zero, jnt_zero, jnt_gravity_only);
-    // auto clamp_limit = [](double i, double limit) { return std::max(std::min(limit, i), -limit); };
-    // for (size_t jnt_idx = 0; jnt_idx < num_jnts; jnt_idx++)
-    // {
-    //   auto torque_limit = robot_model_.getJoint(kinematic_chain_map_[tip_name_].joint_names[jnt_idx])->limits->effort;
-    //   robot_state_msg.gravity[jnt_idx] = clamp_limit(jnt_gravity_only(jnt_idx), torque_limit);
-    //   robot_state_msg.coriolis[jnt_idx] = clamp_limit(jnt_gravity_model(jnt_idx), torque_limit) - robot_state_msg.gravity[jnt_idx];
-    // }
 
     addJacAndVelToMsg(kinematic_chain_map_[tip_name_], jnt_pos, jnt_vel, robot_state_msg);
 
@@ -300,9 +269,9 @@ void ArmKinematicsInterface::addDynamicsToMsg(const Kinematics& kin, const KDL::
     KDL::JntArray C(num_jnts); //coriolis matrix
     KDL::JntArray G(num_jnts); //gravity matrix
     KDL::JntSpaceInertiaMatrix H(num_jnts); //inertiamatrix H=square matrix of size= number of joints
-    kin.chain_dyn_param->JntToMass(jnt_pos,H);
-    kin.chain_dyn_param->JntToCoriolis(jnt_pos,jnt_vel,C);
-    kin.chain_dyn_param->JntToGravity(jnt_pos,G);
+    kdl_->JntToMass(jnt_pos,H);
+    kdl_->JntToCoriolis(jnt_pos,jnt_vel,C);
+    kdl_->JntToGravity(jnt_pos,G);
 
     for (size_t jnt_idx = 0; jnt_idx < num_jnts; jnt_idx++)
     {
@@ -322,7 +291,7 @@ void ArmKinematicsInterface::addJacAndVelToMsg(const Kinematics& kin, const KDL:
 {
     KDL::Jacobian J;
     J.resize(kin.chain.getNrOfJoints());
-    kin.jac_solver->JntToJac(jnt_pos, J);
+    kdl_->JacobianJntToJac(jnt_pos, J);
 
     Eigen::Matrix<double, 6, 1> ee_vel = J.data * jnt_vel.data;
 
@@ -420,7 +389,8 @@ bool ArmKinematicsInterface::computeGravity(const Kinematics& kin,
 {
   std::vector<KDL::Wrench> f_ext(kin.chain.getNrOfSegments(), KDL::Wrench::Zero());
   jnt_torques.resize(kin.chain.getNrOfJoints());
-  return !(kin.gravity_solver->CartToJnt(jnt_pos, jnt_vel, jnt_accel, f_ext, jnt_torques) < 0);
+  // return !(kdl_->GravityCartToJnt(jnt_pos, jnt_vel, jnt_accel, f_ext, jnt_torques) < 0);
+  return false;
 }
 
 bool ArmKinematicsInterface::computePositionFK(const Kinematics& kin,
@@ -428,7 +398,7 @@ bool ArmKinematicsInterface::computePositionFK(const Kinematics& kin,
                                                geometry_msgs::Pose& result)
 {
   KDL::Frame p_out;
-  if (kin.fk_pos_solver->JntToCart(jnt_pos, p_out, kin.chain.getNrOfSegments()) < 0)
+  if (kdl_->PosFKJntToCart(jnt_pos, p_out, kin.chain.getNrOfSegments()) < 0)
   {
     return false;
   }
@@ -437,43 +407,6 @@ bool ArmKinematicsInterface::computePositionFK(const Kinematics& kin,
 }
 
 
-bool ArmKinematicsInterface::computePositionIK(const Kinematics& kin,
-                                               const geometry_msgs::Pose& cart_pose,
-                                               const KDL::JntArray& jnt_nullspace_bias,
-                                               const KDL::JntArray& jnt_seed, KDL::JntArray& result)
-{
-  KDL::Frame pose_kdl;
-  tf::poseMsgToKDL(cart_pose, pose_kdl);
-  return !(kin.ik_solver->CartToJnt(jnt_seed, pose_kdl, jnt_nullspace_bias, result) < 0);
-}
-
-bool ArmKinematicsInterface::computeVelocityFK(const Kinematics& kin,
-                                               const KDL::JntArrayVel& jnt_vel,
-                                               geometry_msgs::Twist& result)
-{
-  KDL::FrameVel v_out;
-  if (kin.fk_vel_solver->JntToCart(jnt_vel, v_out, kin.chain.getNrOfSegments()) < 0)
-  {
-    return false;
-  }
-  tf::twistKDLToMsg(v_out.GetTwist(), result);
-  return true;
-}
-// TODO(imcmahon): once ChainFDSolverTau is upstreamed
-// bool ArmKinematicsInterface::computeEffortFK(const Kinematics& kin,
-//                                              const KDL::JntArray& jnt_pos,
-//                                              const KDL::JntArray& jnt_eff,
-//                                              geometry_msgs::Wrench& result)
-// {
-//   KDL::Wrench wrench;
-//   if (kin.fk_eff_solver->JntToCart(jnt_pos, jnt_eff, wrench) < 0)
-//   {
-//     return false;
-//   }
-//   tf::wrenchKDLToMsg(wrench, result);
-//   return true;
-// } 
-
 void ArmKinematicsInterface::publishEndpointState()
 {
   std::shared_ptr<const sensor_msgs::JointState> joint_state;
@@ -481,28 +414,15 @@ void ArmKinematicsInterface::publishEndpointState()
   if (joint_state.get())
   {
     franka_core_msgs::EndPointState endpoint_state;
-    endpoint_state.O_F_ext_hat_K.header.frame_id = "UNDEFINED";
-    endpoint_state.O_F_ext_hat_K.wrench.force.x = 0.0;
-    endpoint_state.O_F_ext_hat_K.wrench.force.y = 0.0;
-    endpoint_state.O_F_ext_hat_K.wrench.force.z = 0.0;
-    endpoint_state.O_F_ext_hat_K.wrench.torque.x = 0.0;
-    endpoint_state.O_F_ext_hat_K.wrench.torque.y = 0.0;
-    endpoint_state.O_F_ext_hat_K.wrench.torque.z = 0.0;
 
-    endpoint_state.K_F_ext_hat_K.header.frame_id = "UNDEFINED";
-    endpoint_state.K_F_ext_hat_K.wrench.force.x = 0.0;
-    endpoint_state.K_F_ext_hat_K.wrench.force.y = 0.0;
-    endpoint_state.K_F_ext_hat_K.wrench.force.z = 0.0;
-    endpoint_state.K_F_ext_hat_K.wrench.torque.x = 0.0;
-    endpoint_state.K_F_ext_hat_K.wrench.torque.y = 0.0;
-    endpoint_state.K_F_ext_hat_K.wrench.torque.z = 0.0;
+    std::shared_ptr<const geometry_msgs::Wrench> ft_vals;
+    ft_msg_buffer_.get(ft_vals);
+    endpoint_state.K_F_ext_hat_K.header.frame_id = "panda_link7";
+    const geometry_msgs::Wrench ft_in_K_frame = *ft_vals.get();
+    endpoint_state.K_F_ext_hat_K.wrench = ft_in_K_frame;
 
     for(const auto& chain : kinematic_chain_map_)
     {
-      
-
-       // TODO(imcmahon) once ChainFDSolverTau is upstreamed
-      // computeEffortFK(kinematic_chain_map_[tip_name_], jnt_pos, jnt_eff, endpoint_state.O_F_ext_hat_K.wrench);
       
       if(chain.first == tip_name_)
       {
@@ -513,9 +433,22 @@ void ArmKinematicsInterface::publishEndpointState()
         computePositionFK(chain.second, jnt_pos, pose);
 
         Eigen::Quaterniond q(pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z);
-        // Eigen::Affine3d t(Eigen::Translation3d(Eigen::Vector3d(pose.position.x, pose.position.y, pose.position.z)));
         Eigen::Matrix3d m = q.toRotationMatrix();
 
+        // compute wrench wrt base frame (wrench in K frame is more reliable)
+        Eigen::Vector3d f_vec_K(ft_in_K_frame.force.x, ft_in_K_frame.force.y, ft_in_K_frame.force.z);
+        Eigen::Vector3d tau_vec_K(ft_in_K_frame.torque.x, ft_in_K_frame.torque.y, ft_in_K_frame.torque.z);
+
+        Eigen::Vector3d f_vec_O = m.inverse()*f_vec_K;
+        Eigen::Vector3d tau_vec_O = m.inverse()*tau_vec_K;
+
+        endpoint_state.O_F_ext_hat_K.header.frame_id = root_name_;
+        endpoint_state.O_F_ext_hat_K.wrench.force.x = f_vec_O(0);
+        endpoint_state.O_F_ext_hat_K.wrench.force.y = f_vec_O(1);
+        endpoint_state.O_F_ext_hat_K.wrench.force.z = f_vec_O(2);
+        endpoint_state.O_F_ext_hat_K.wrench.torque.x = tau_vec_O(0);
+        endpoint_state.O_F_ext_hat_K.wrench.torque.y = tau_vec_O(1);
+        endpoint_state.O_F_ext_hat_K.wrench.torque.z = tau_vec_O(2);
 
         Eigen::Vector3d t(pose.position.x, pose.position.y, pose.position.z);
 
@@ -526,18 +459,12 @@ void ArmKinematicsInterface::publishEndpointState()
         Trans.block<3,1>(0,3) = t;
 
         Eigen::Map<Eigen::RowVectorXd> flattened_mat(Trans.data(), Trans.size());
-        // endpoint_state.O_T_EE = flattened_mat.data()
+
         std::vector<double> vec(flattened_mat.data(), flattened_mat.data() + flattened_mat.size());
-
-
         std::copy_n(vec.begin(), 16, endpoint_state.O_T_EE.begin());
-        // t.linear() = q.toRotationMatrix();
 
         KDL::JntArrayVel jnt_array_vel(jnt_pos, jnt_vel);
-        // if (!computeVelocityFK(chain.second, jnt_array_vel, endpoint_state.twist))
-        // {
-        //   endpoint_state.valid &= false;
-        // }
+
         endpoint_state.header.frame_id = root_name_;
         endpoint_state.header.stamp = ros::Time::now();
         endpoint_state_pub_.publish(endpoint_state);

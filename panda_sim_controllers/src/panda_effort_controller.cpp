@@ -10,7 +10,7 @@
 **************************************************************************/
 
 /***************************************************************************
-* Copyright (c) 2019, Saif Sidhik
+* Copyright (c) 2019-2020, Saif Sidhik
 * Copyright (c) 2013-2018, Rethink Robotics Inc.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +67,7 @@ namespace panda_sim_controllers {
   void PandaEffortController::setCommands() {
     // set the new commands for each controller
     std::vector<Command> command = *(command_buffer_.readFromRT());
+
     for (auto it = command.begin(); it != command.end(); it++) {
       controllers_[it->name_]->command_buffer_.writeFromNonRT(it->effort_);
     }

@@ -9,7 +9,7 @@
 **************************************************************************/
 
 /***************************************************************************
-* Copyright (c) 2019, Saif Sidhik
+* Copyright (c) 2019-2020, Saif Sidhik
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -43,16 +43,16 @@ PandaGripperController::PandaGripperController()
       start_position_(0),
       last_position_(start_position_),
       homing_action_server(
-      nh_, "/panda_simulator/franka_gripper/homing",
+      nh_, "/franka_gripper/homing",
       boost::bind(&PandaGripperController::homing, this, _1),false),
       stop_action_server(
-      nh_, "/panda_simulator/franka_gripper/stop",
+      nh_, "/franka_gripper/stop",
       boost::bind(&PandaGripperController::stop, this, _1),false),
       move_action_server(
-      nh_, "/panda_simulator/franka_gripper/move",
+      nh_, "/franka_gripper/move",
       boost::bind(&PandaGripperController::move, this, _1), false),
       grasp_action_server(
-      nh_, "/panda_simulator/franka_gripper/grasp",
+      nh_, "/franka_gripper/grasp",
       boost::bind(&PandaGripperController::grasp, this, _1), false)
       {
 }
@@ -88,7 +88,7 @@ bool PandaGripperController::init(panda_hardware_interface::SharedJointInterface
 
   // Get number of joints
   n_joints_ = xml_struct.size();
-  ROS_ASSERT_MSG(n_joints_ == 2, "Electric Gripper expects exactly 2 joints and %zu found. Exiting.", n_joints_);
+  ROS_ASSERT_MSG(n_joints_ == 2, "PandaGripperController expects exactly 2 joints and %zu found. Exiting.", n_joints_);
   ROS_INFO_STREAM(
       "Initializing PandaGripperController with "<<n_joints_<<" joints.");
 
@@ -160,7 +160,7 @@ bool PandaGripperController::init(panda_hardware_interface::SharedJointInterface
   }
   else
   {
-    state_pub_ = nh.advertise<sensor_msgs::JointState>("/panda_simulator/franka_gripper/joint_states", 1, true);
+    state_pub_ = nh.advertise<sensor_msgs::JointState>("/franka_gripper/joint_states", 1, true);
   }
 
   pub_timer_ = nh.createTimer(ros::Duration(0.1), &PandaGripperController::timerUpdate, this);
@@ -267,7 +267,7 @@ void PandaGripperController::move(const franka_gripper::MoveGoalConstPtr& goal) 
 }
 
 void PandaGripperController::homing(const franka_gripper::HomingGoalConstPtr& /*goal*/) {
-  
+  ROS_WARN_STREAM("Homing not implemented for simulator.");
 }
 
 void PandaGripperController::stop(const franka_gripper::StopGoalConstPtr& /*goal*/) {

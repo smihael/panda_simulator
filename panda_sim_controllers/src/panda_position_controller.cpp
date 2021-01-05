@@ -10,7 +10,7 @@
 **************************************************************************/
 
 /***************************************************************************
-* Copyright (c) 2019, Saif Sidhik
+* Copyright (c) 2019-2020, Saif Sidhik
 * Copyright (c) 2013-2018, Rethink Robotics Inc.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,8 +28,6 @@
 
 #include <panda_sim_controllers/panda_position_controller.h>
 #include <pluginlib/class_list_macros.h>
-
-#include <boost/thread/thread.hpp>
 
 namespace panda_sim_controllers {
   bool PandaPositionController::init(panda_hardware_interface::SharedJointInterface* hw, ros::NodeHandle &n){
@@ -63,7 +61,7 @@ namespace panda_sim_controllers {
 
         // Start realtime state publisher
       controller_states_publisher_.reset(
-    new realtime_tools::RealtimePublisher<franka_core_msgs::JointControllerStates>(n, "/arm/joint_controller_states", 1));
+          new realtime_tools::RealtimePublisher<franka_core_msgs::JointControllerStates>(n, "/panda_simulator/motion_controller/arm/joint_controller_states", 1));
 
       if (!n.getParam("/robot_config/joint_names", controller_states_publisher_->msg_.names) ) {
       ROS_ERROR(
@@ -71,6 +69,7 @@ namespace panda_sim_controllers {
           "controller init!");
       return false;
       }
+      controller_states_publisher_->msg_.controller_name = "position_joint_position_controller";
 
       // start joint_controller_states publisher
       t_ = boost::thread(&PandaPositionController::publishControllerState, this);
@@ -129,7 +128,7 @@ namespace panda_sim_controllers {
 
   PandaPositionController::CommandsPtr PandaPositionController::cmdPositionMode(const franka_core_msgs::JointCommandConstPtr& msg) {
     if (msg->names.size() != msg->position.size()) {
-      ROS_ERROR_STREAM_NAMED(JOINT_ARRAY_CONTROLLER_NAME, "Position commands size does not match joints size");
+      ROS_ERROR_STREAM_NAMED("PandaPositionController", "Position commands size does not match joints size");
     }
 
     std::vector<double> delta_time(msg->names.size());
@@ -179,8 +178,9 @@ namespace panda_sim_controllers {
 
   PandaPositionController::CommandsPtr PandaPositionController::cmdTrajectoryMode(const franka_core_msgs::JointCommandConstPtr& msg) {
       CommandsPtr commands(new std::vector<Command>());
+      // ROS_WARN_STREAM(msg->names.size() << " " << msg->position.size() << " " << msg->velocity.size());
       if (msg->names.size() != msg->position.size() || msg->names.size() != msg->velocity.size()) {
-        ROS_ERROR_STREAM_NAMED(JOINT_ARRAY_CONTROLLER_NAME, "Trajectory commands size does not match joints size");
+        ROS_ERROR_STREAM_NAMED("PandaPositionController", "Trajectory commands size does not match joints size");
       }
 
       for (size_t i = 0; i < msg->names.size(); i++) {
@@ -217,6 +217,7 @@ namespace panda_sim_controllers {
   void PandaPositionController::setCommands() {
     // set the new commands for each controller
     std::vector<Command> command = *(command_buffer_.readFromRT());
+
     for (auto it = command.begin(); it != command.end(); it++) {
       if (it->has_velocity_) {
         controllers_[it->name_]->setCommand(it->position_, it->velocity_);

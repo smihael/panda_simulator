@@ -15,7 +15,9 @@ find_package(catkin
     std_msgs
     kdl_parser
     tf_conversions
-    sns_ik_lib
+    orocos_kdl
+    panda_sim_controllers
+    panda_sim_custom_action_server
 )
 
 # Depend on system install of Gazebo
@@ -33,9 +35,10 @@ catkin_package(
   roscpp
   kdl_parser
   tf_conversions
-  sns_ik_lib
+  panda_sim_controllers
+  panda_sim_custom_action_server
  INCLUDE_DIRS include
- LIBRARIES    panda_robot_hw_sim
+ LIBRARIES panda_robot_hw_sim
 )
 
 roslint_cpp()
@@ -54,6 +57,7 @@ add_library(panda_gazebo_ros_control
   src/panda_gazebo_ros_control_plugin.cpp
   src/arm_controller_interface.cpp
   src/arm_kinematics_interface.cpp
+  src/kdl_methods.cpp
 )
 set_property(TARGET panda_gazebo_ros_control PROPERTY CXX_STANDARD 14)
 

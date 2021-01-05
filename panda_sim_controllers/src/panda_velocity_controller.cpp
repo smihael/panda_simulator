@@ -10,7 +10,7 @@
 **************************************************************************/
 
 /***************************************************************************
-* Copyright (c) 2019, Saif Sidhik
+* Copyright (c) 2019-2020, Saif Sidhik
 * Copyright (c) 2013-2018, Rethink Robotics Inc.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,13 +50,15 @@ namespace panda_sim_controllers {
       }
               // Start realtime state publisher
       controller_states_publisher_.reset(
-      new realtime_tools::RealtimePublisher<franka_core_msgs::JointControllerStates>(n, "/arm/joint_controller_states", 1));
+      new realtime_tools::RealtimePublisher<franka_core_msgs::JointControllerStates>(n, "/panda_simulator/motion_controller/arm/joint_controller_states", 1));
       if (!n.getParam("/robot_config/joint_names", controller_states_publisher_->msg_.names) ) {
       ROS_ERROR(
           "PandaVelocityController: Invalid or no joint_names parameters provided, aborting "
           "controller init!");
       return false;
       }
+      controller_states_publisher_->msg_.controller_name = "velocity_joint_velocity_controller";
+
       
       t_ = boost::thread(&PandaVelocityController::publishControllerState, this);
     }
@@ -117,6 +119,7 @@ namespace panda_sim_controllers {
 
   void PandaVelocityController::setCommands() {
     // set the new commands for each controller
+
     std::vector<Command> command = *(command_buffer_.readFromRT());
     for (auto it = command.begin(); it != command.end(); it++) {
       controllers_[it->name_]->setCommand(it->velocity_);
