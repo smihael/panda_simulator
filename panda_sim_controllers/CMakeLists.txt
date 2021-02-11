@@ -33,7 +33,6 @@ include_directories(include
 add_library(${PROJECT_NAME}
   src/panda_position_controller.cpp
   src/panda_velocity_controller.cpp
-  src/panda_effort_controller_as.cpp
   src/panda_gravity_controller.cpp
   src/panda_joint_position_controller.cpp
   src/panda_joint_velocity_controller.cpp
